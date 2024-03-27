@@ -1,0 +1,307 @@
+#!/usr/bin/env python3
+
+import argparse
+import socket
+import ssl
+from urllib.parse import urlparse
+from html.parser import HTMLParser
+
+DEFAULT_SERVER = "www.3700.network"
+DEFAULT_PORT = 443
+CRLF = "\r\n\r\n"
+LOGIN_URL = "https://www.3700.network/accounts/login/?next=/fakebook/"
+pages_visited = {}
+pages_to_visit = []
+secret_flags = []
+# username=daniellee922&password=794c8ece704a506d26cec4f6ae17011709b9cf5e0fe969ad11db7628e6dd2ac4&csrfmiddlewaretoken=dU8D7OkeFpNptuV3XMA4ZddJ4qhLv5xX3WQJqHLtP0RocTCeXiW1vE4DWv1z5Rlo&next=
+
+class LinkParser(HTMLParser):
+    def handle_starttag(self, tag, attrs):
+        global pages_to_visit
+        global pages_visited
+        if tag == 'a':
+            for attr, value in attrs:
+                if attr == 'href' and '/fakebook/' in value:
+                    if value not in pages_visited:
+                        return pages_to_visit.append(value)
+
+    def handle_data(self, data):
+        global flags
+                    
+        if "FLAG:" in data:
+            secret_flag = data.split(": ")[1]
+            secret_flags.append(secret_flag)
+
+class InputParser(HTMLParser):
+    csrfmiddlewaretoken_value = ""
+
+    def handle_starttag(self, tag, attrs):
+        if tag == 'input':
+            for attr, value in attrs:
+                if attr == 'name' and value == 'csrfmiddlewaretoken':
+                    for attr, value in attrs:
+                        if attr == 'value':
+                            self.csrfmiddlewaretoken_value = value
+                            return 
+
+class Crawler:
+    def __init__(self, args):
+        self.server = args.server
+        self.port = args.port
+        self.username = args.username
+        self.password = args.password
+        self.csrf_token = None
+        self.session_id = None
+
+    def receive_response(self, socket):
+        response = b""
+        while True:
+            chunk = socket.recv(4096)
+            if not chunk:
+                break
+            response += chunk
+            # if delimeter is found then nothing else to read
+            if b'\r\n\r\n' in response:
+                break
+        return response
+
+    def getHTMLContent(self, data):
+        html_start_index = data.find(CRLF) + len(CRLF)
+        html_content = data[html_start_index:]
+        return html_content
+
+    def login(self):
+        global pages_to_visit
+
+        logged_in = False
+        while not logged_in:
+            login_data = self.GET(LOGIN_URL)
+            login_data_status_code, parsedLoginData = self.parseResponse(login_data)
+            print(f'GET RESPONSE LOGIN: {login_data}')
+            # print(f'parsedLoginData: {parsedLoginData}')
+            if login_data_status_code == str(200):
+                logged_in = True
+            self.csrf_token = parsedLoginData['set-cookie']['csrftoken']
+            self.session_id = parsedLoginData['set-cookie']['sessionid']
+        
+        login_data_html = self.getHTMLContent(login_data)
+        print(f"HTML CONTENT: {login_data_html}")
+
+        input_parser = InputParser()
+        input_parser.feed(login_data_html)
+        csrf_token = input_parser.csrfmiddlewaretoken_value
+
+
+        
+        # csrfmiddlewaretoken = input_parser.feed(parsedLoginData['body'])
+        print(f"CSRFMIDDLEWARETOKEN: {csrf_token}")
+
+        postBody = f"username={self.username}&password={self.password}&csrfmiddlewaretoken={csrf_token}&next=/fakebook/"
+        login_successful = False
+        # return
+        while not login_successful:
+            post_login_data = self.POST(LOGIN_URL, postBody, parsedLoginData['cookie-string'])
+            post_login_status_code, parsed_post_login_data = self.parseResponse(post_login_data)
+            print(f"parsed_post_login_data: {parsed_post_login_data}")
+
+            if post_login_status_code == str(302):
+                login_successful = True
+                print(f'Received Status Code: {post_login_status_code}')
+                
+                redirect_url = parsed_post_login_data['location']
+                print(f"REDIRECT URL: {redirect_url}")
+                homePageData = self.GET(redirect_url)
+            else:
+                print(f'ERROR ENCOUNTERED')
+                break
+
+
+        return homePageData
+        
+
+
+    def GET(self, url):
+        url = urlparse(url)
+        path = url.path
+
+        # TLS wrapper
+        context = ssl.create_default_context()
+        mysocket = context.wrap_socket(socket.socket(socket.AF_INET), server_hostname=self.server)
+        mysocket.connect((self.server, self.port))
+
+        cert = mysocket.getpeercert()
+        # print(cert)
+        cookieString = self.createCookieString()
+        request = f"GET {path} HTTP/1.0\nHost: {self.server}\nCookie: {cookieString}\nConnection: keep-alive{CRLF}"
+
+        print("Request to %s:%d" % (self.server, self.port))
+        print(request)
+        mysocket.send(request.encode('ascii'))
+
+        data = self.receive_response(mysocket).decode('ascii')
+
+        mysocket.shutdown(1)
+        mysocket.close()
+
+        return data
+
+    def POST(self, url, data, cookies):
+        url = urlparse(url)
+        path = url.path
+        
+        # TLS wrapper
+        context = ssl.create_default_context()
+        mysocket = context.wrap_socket(socket.socket(socket.AF_INET), server_hostname=self.server)
+        mysocket.connect((self.server, self.port))
+
+        cert = mysocket.getpeercert()
+        # print(cert)
+
+        content_length = len(data)
+
+        cookie_string = f"csrftoken={self.csrf_token}; sessionid={self.session_id}"
+        request = f"POST {path} HTTP/1.0\r\nHost: {self.server}\r\nConnection: keep-alive\r\n" \
+                            f"Content-Length: {content_length}\r\n" \
+                            f"Content-Type: application/x-www-form-urlencoded\r\n" \
+                            f"Cookie: {cookie_string}{CRLF}" \
+                            f"{data}{CRLF}"
+
+        print("Request to %s:%d" % (self.server, self.port))
+        print(request)
+        mysocket.send(request.encode('ascii'))
+
+        data = self.receive_response(mysocket).decode('ascii')
+
+        mysocket.shutdown(1)
+        mysocket.close()
+
+        return data
+
+    def createCookieString(self):
+        cookieString = ""
+        if self.csrf_token:
+            if self.session_id:
+                cookieString = f"csrftoken={self.csrf_token}; sessionid={self.session_id}"
+            else:
+                cookieString = f"csrftoken={self.csrf_token}"
+        elif self.session_id:
+            cookieString = f"sessionid={self.session_id}"
+        return cookieString
+
+    def formatCookies(self, parsedData):
+        if 'set-cookie' not in parsedData.keys():
+            return parsedData
+        
+        cookieString = ""
+        if 'csrftoken' in parsedData['set-cookie'].keys():
+            if 'sessionid' in parsedData['set-cookie'].keys():
+                cookieString = f"csrftoken={parsedData['set-cookie']['csrftoken']}; sessionid={parsedData['set-cookie']['sessionid']}"
+            else:
+                cookieString = f"csrftoken={parsedData['set-cookie']['csrftoken']}"
+        elif 'sessionid' in parsedData['set-cookie'].keys():
+            cookieString = f"sessionid={parsedData['set-cookie']['sessionid']}"
+
+        parsedData['cookie-string'] = cookieString
+        return parsedData
+
+    def parseResponse(self, data):
+        # Get the end index of the header section before the body begins
+        headers_end_index = data.find(CRLF)
+        status_line = data[:headers_end_index].split('\r\n')[0]
+        headers = data[:headers_end_index].split('\r\n')[1:]
+        body = data[headers_end_index:]
+        status_code = status_line.split(' ')[1]
+        parsedData = {}
+        parsedData['body'] = body
+        for header in headers:
+            if header.startswith('set-cookie:'):
+                parts = header.split(': ')
+                cookie_key, cookie_value = parts[0], parts[1]
+
+                cookie_parts = cookie_value.split('; ')
+                key = cookie_parts[0].split('=')[0]
+                value = cookie_parts[0].split('=')[1]
+
+                parsedData.setdefault('set-cookie', {})[key] = value
+            else:
+                key, value = header.split(': ', 1)
+                parsedData[key.lower()] = value
+        # print(f'PARSED DATA: {parsedData}')
+        return status_code, self.formatCookies(parsedData)
+
+    def crawlFollowingURL(self):
+        global pages_to_visit
+        global pages_visited
+
+        parser = LinkParser()
+
+        next_url = pages_to_visit.pop()
+
+        try:
+            next_url_data = self.GET(self.server + next_url)
+            next_url_status_code, parse_next_url = self.parseResponse(next_url_data)
+
+            next_url_html = self.getHTMLContent(next_url_data)
+
+            if next_url_status_code == str(200):
+                print("SUCCESS")
+                parser.feed(next_url_html)
+                pages_visited[next_url] = True
+            else:
+                print(f"ERROR: status code - {next_url_status_code}")
+                if next_url_status_code == str(302):
+                    pages_to_visit.append(parse_next_url['location'].replace(self.server, ""))
+                elif next_url_status_code == str(503):
+                    # just append the page to the beginning of pages to visit again and redo the request
+                    pages_to_visit.insert(0, next_url)
+
+        except socket.timeout:
+            pages_to_visit.append(next_url)
+
+
+
+            
+
+    def run(self):
+        global pages_visited
+
+        parser = LinkParser()
+
+        request = f"GET / HTTP/1.1\r\nHost: {self.server}\r\n\r\n"
+
+        root_data = self.GET('/')
+        root_data_status_code, parsed_root_data = self.parseResponse(root_data)
+        # print(f"PARSED ROOT DATA: {parsed_root_data}")
+
+        home_page_data = self.login()
+        pages_visited['/fakebook/'] = True
+        home_page_status_code, parsed_home_page_data = self.parseResponse(home_page_data)
+
+        home_page_html = self.getHTMLContent(home_page_data)
+        parser.feed(home_page_html)
+        print(f"HOME PAGE DATA: {home_page_data}\n")
+        print(f"HOME PAGE HTML: {home_page_html}\n")
+        print(f"home page parsed data: {parsed_home_page_data}")
+        # print(f"BODY: {parsed_home_page_data['body']}")
+        # while len(pages_visited) > 0 and len(secret_flags) < 5:
+        #     self.crawlFollowingURL()
+            
+            
+                
+
+
+
+
+            
+
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='crawl Fakebook')
+    parser.add_argument('-s', dest="server", type=str, default=DEFAULT_SERVER, help="The server to crawl")
+    parser.add_argument('-p', dest="port", type=int, default=DEFAULT_PORT, help="The port to use")
+    parser.add_argument('username', type=str, help="The username to use")
+    parser.add_argument('password', type=str, help="The password to use")
+    args = parser.parse_args()
+    sender = Crawler(args)
+    sender.run()
