@@ -5,6 +5,7 @@ import socket
 import ssl
 from urllib.parse import urlparse
 from html.parser import HTMLParser
+import threading
 
 DEFAULT_SERVER = "www.3700.network"
 DEFAULT_PORT = 443
@@ -241,8 +242,8 @@ class Crawler:
         global pages_visited
 
         parser = LinkParser()
-        while self.pages_visit.pop() not in pages_visited:
-            next_url = self.pages_to_visit.pop()
+
+        next_url = self.pages_to_visit.pop()
 
         try:
             next_url_data = self.GET(next_url)
@@ -276,6 +277,38 @@ class Crawler:
 
             
 
+    # def run(self):
+    #     global pages_visited
+    #     global secret_flags
+
+    #     parser = LinkParser()
+
+    #     request = f"GET / HTTP/1.0\r\nHost: {self.server}\r\n\r\n"
+
+    #     root_data = self.GET('/')
+    #     root_data_status_code, parsed_root_data = self.parseResponse(root_data)
+    #     # print(f"PARSED ROOT DATA: {parsed_root_data}")
+
+    #     home_page_data = self.login()
+    #     pages_visited['/fakebook/'] = True
+    #     home_page_status_code, parsed_home_page_data = self.parseResponse(home_page_data)
+
+    #     home_page_html = self.getHTMLContent(home_page_data)
+    #     parser.feed(home_page_html)
+    #     print(f"FOUND LINKS: ")
+    #     for link in parser.pages_to_visit:
+    #         print(link + "\n")
+    #         self.pages_to_visit.append(link)
+    #         parser.pages_to_visit.remove(link)
+        
+    #     print(f"PAGES TO VISIT: {parser.pages_to_visit}")
+    #     print(f"HOME PAGE DATA: {home_page_data}\n")
+    #     print(f"HOME PAGE HTML: {home_page_html}\n")
+    #     print(f"home page parsed data: {parsed_home_page_data}")
+    #     # print(f"BODY: {parsed_home_page_data['body']}")
+    #     while len(self.pages_to_visit) > 0 and len(secret_flags) < 5:
+    #         self.crawlFollowingURL()
+    #         print(f"SECRET_FLAGS: {secret_flags}")
     def run(self):
         global pages_visited
         global secret_flags
@@ -286,7 +319,6 @@ class Crawler:
 
         root_data = self.GET('/')
         root_data_status_code, parsed_root_data = self.parseResponse(root_data)
-        # print(f"PARSED ROOT DATA: {parsed_root_data}")
 
         home_page_data = self.login()
         pages_visited['/fakebook/'] = True
@@ -294,31 +326,26 @@ class Crawler:
 
         home_page_html = self.getHTMLContent(home_page_data)
         parser.feed(home_page_html)
-        print(f"FOUND LINKS: ")
+
         for link in parser.pages_to_visit:
-            print(link + "\n")
             self.pages_to_visit.append(link)
             parser.pages_to_visit.remove(link)
-        
-        print(f"PAGES TO VISIT: {parser.pages_to_visit}")
-        print(f"HOME PAGE DATA: {home_page_data}\n")
-        print(f"HOME PAGE HTML: {home_page_html}\n")
-        print(f"home page parsed data: {parsed_home_page_data}")
-        # print(f"BODY: {parsed_home_page_data['body']}")
-        while len(self.pages_to_visit) > 0 and len(secret_flags) < 5:
-            self.crawlFollowingURL()
-            print(f"SECRET_FLAGS: {secret_flags}")
 
-        
-            
-            
-                
+        def crawl():
+            while len(self.pages_to_visit) > 0 and len(secret_flags) < 5:
+                self.crawlFollowingURL()
+                print(f"SECRET_FLAGS: {secret_flags}")
 
+        # Create and start threads
+        threads = []
+        for _ in range(5):
+            thread = threading.Thread(target=crawl)
+            thread.start()
+            threads.append(thread)
 
-
-
-            
-
+        # Wait for all threads to finish
+        for thread in threads:
+            thread.join()
 
 
 if __name__ == "__main__":
