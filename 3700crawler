@@ -15,7 +15,8 @@ pages_visited = {}
 # pages_to_visit = []
 secret_flags = []
 # username=daniellee922&password=794c8ece704a506d26cec4f6ae17011709b9cf5e0fe969ad11db7628e6dd2ac4&csrfmiddlewaretoken=dU8D7OkeFpNptuV3XMA4ZddJ4qhLv5xX3WQJqHLtP0RocTCeXiW1vE4DWv1z5Rlo&next=
-
+# ./3700crawler daniellee922 794c8ece704a506d26cec4f6ae17011709b9cf5e0fe969ad11db7628e6dd2ac4
+# ./3700crawler calvinli14 74c8f4e16ff70f4c2b85318e3bebd0cd08738f3b65edb5612d6d5d23140aa441
 class LinkParser(HTMLParser):
     def __init__(self):
         super().__init__()
@@ -334,7 +335,7 @@ class Crawler:
         def crawl():
             while len(self.pages_to_visit) > 0 and len(secret_flags) < 5:
                 self.crawlFollowingURL()
-                print(f"SECRET_FLAGS: {secret_flags}")
+                print(f"SECRET FLAGS: {secret_flags}")
 
         # Create and start threads
         threads = []
