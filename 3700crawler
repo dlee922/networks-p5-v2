@@ -106,23 +106,27 @@ class Crawler:
         login_successful = False
         # return
         while not login_successful:
-            post_login_data = self.POST(LOGIN_URL, postBody, parsedLoginData['cookie-string'])
-            print(f"POST LOGIN RESPONSE: {post_login_data}")
-            post_login_status_code, parsed_post_login_data = self.parseResponse(post_login_data)
-            # print(f"parsed_post_login_data: {parsed_post_login_data}")
+            try:
+                post_login_data = self.POST(LOGIN_URL, postBody, parsedLoginData['cookie-string'])
+                print(f"POST LOGIN RESPONSE: {post_login_data}")
+                post_login_status_code, parsed_post_login_data = self.parseResponse(post_login_data)
+                # print(f"parsed_post_login_data: {parsed_post_login_data}")
 
-            self.csrf_token = parsed_post_login_data['set-cookie']['csrftoken']
-            self.session_id = parsed_post_login_data['set-cookie']['sessionid']
+                self.csrf_token = parsed_post_login_data['set-cookie']['csrftoken']
+                self.session_id = parsed_post_login_data['set-cookie']['sessionid']
 
-            if post_login_status_code == str(302):
-                login_successful = True
-                print(f'Received Status Code: {post_login_status_code}')
-                
-                redirect_url = parsed_post_login_data['location']
-                print(f"REDIRECT URL: {redirect_url}")
-                homePageData = self.GET("/fakebook/")
-            else:
-                print(f'ERROR ENCOUNTERED')
+                if post_login_status_code == str(302):
+                    login_successful = True
+                    print(f'Received Status Code: {post_login_status_code}')
+                    
+                    redirect_url = parsed_post_login_data['location']
+                    print(f"REDIRECT URL: {redirect_url}")
+                    homePageData = self.GET("/fakebook/")
+                else:
+                    print(f'ERROR ENCOUNTERED')
+                    break
+            except Exception as e:
+                print(f"ERROR: {e}")
                 break
 
 
