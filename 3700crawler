@@ -6,13 +6,15 @@ import ssl
 from urllib.parse import urlparse
 from html.parser import HTMLParser
 import threading
+import time
+from collections import deque
 
 DEFAULT_SERVER = "www.3700.network"
 DEFAULT_PORT = 443
 CRLF = "\r\n\r\n"
 LOGIN_URL = "https://www.3700.network/accounts/login/?next=/fakebook/"
 pages_visited = {}
-# pages_to_visit = []
+pages_to_visit = []
 secret_flags = []
 # username=daniellee922&password=794c8ece704a506d26cec4f6ae17011709b9cf5e0fe969ad11db7628e6dd2ac4&csrfmiddlewaretoken=dU8D7OkeFpNptuV3XMA4ZddJ4qhLv5xX3WQJqHLtP0RocTCeXiW1vE4DWv1z5Rlo&next=
 # ./3700crawler daniellee922 794c8ece704a506d26cec4f6ae17011709b9cf5e0fe969ad11db7628e6dd2ac4
@@ -60,15 +62,53 @@ class Crawler:
 
     def receive_response(self, socket):
         response = b""
+        content_length = None
+
         while True:
             chunk = socket.recv(4096)
             if not chunk:
                 break
             response += chunk
-            # if delimeter is found then nothing else to read
-            if b'\r\n\r\n' in response:
+
+            # Check for Content-Length header
+            if content_length is None:
+                content_length = self.get_content_length(response)
+
+            # If Content-Length is known, decrement it
+            if content_length is not None:
+                content_length -= len(chunk)
+
+            # Break if content length has reached 0
+            if content_length == 0:
                 break
+
         return response
+
+    # def receive_response(self, socket):
+    #     response = b""
+    #     while True:
+    #         chunk = socket.recv(4096)
+    #         if not chunk:
+    #             break
+    #         response += chunk
+    #         # if delimeter is found then nothing else to read
+    #         if b'\r\n\r\n' in response:
+    #             break
+    #     return response
+
+    def get_content_length(self, response):
+        # Find Content-Length header
+        content_length_str = b"content-length: "
+        start_index = response.find(content_length_str)
+        if start_index != -1:
+            end_index = response.find(b"\r\n", start_index)
+            if end_index != -1:
+                content_length_value = response[start_index + len(content_length_str):end_index]
+                try:
+                    return int(content_length_value)
+                except ValueError:
+                    return None
+        return None
 
     def getHTMLContent(self, data):
         html_start_index = data.find(CRLF) + len(CRLF)
@@ -88,7 +128,6 @@ class Crawler:
                 logged_in = True
         self.csrf_token = parsedLoginData['set-cookie']['csrftoken']
         self.session_id = parsedLoginData['set-cookie']['sessionid']
-            
         
         login_data_html = self.getHTMLContent(login_data)
         print(f"HTML CONTENT: {login_data_html}")
@@ -97,7 +136,7 @@ class Crawler:
         input_parser.feed(login_data_html)
         csrf_token = input_parser.csrfmiddlewaretoken_value
 
-
+        # time.sleep(1)
         
         # csrfmiddlewaretoken = input_parser.feed(parsedLoginData['body'])
         print(f"CSRFMIDDLEWARETOKEN: {csrf_token}")
@@ -106,30 +145,22 @@ class Crawler:
         login_successful = False
         # return
         while not login_successful:
-            try:
-                post_login_data = self.POST(LOGIN_URL, postBody, parsedLoginData['cookie-string'])
-                print(f"POST LOGIN RESPONSE: {post_login_data}")
-                post_login_status_code, parsed_post_login_data = self.parseResponse(post_login_data)
-                # print(f"parsed_post_login_data: {parsed_post_login_data}")
+            post_login_data = self.POST(LOGIN_URL, postBody, parsedLoginData['cookie-string'])
+            print(f"POST LOGIN RESPONSE: {post_login_data}")
+            post_login_status_code, parsed_post_login_data = self.parseResponse(post_login_data)
+            # print(f"parsed_post_login_data: {parsed_post_login_data}")
 
-                self.csrf_token = parsed_post_login_data['set-cookie']['csrftoken']
-                self.session_id = parsed_post_login_data['set-cookie']['sessionid']
+            if post_login_status_code == str(302):
+                login_successful = True
+                print(f'Received Status Code: {post_login_status_code}')
 
-                if post_login_status_code == str(302):
-                    login_successful = True
-                    print(f'Received Status Code: {post_login_status_code}')
-                    
-                    redirect_url = parsed_post_login_data['location']
-                    print(f"REDIRECT URL: {redirect_url}")
-                    homePageData = self.GET("/fakebook/")
-                else:
-                    print(f'ERROR ENCOUNTERED')
-                    break
-            except Exception as e:
-                print(f"ERROR: {e}")
-                break
+        self.csrf_token = parsed_post_login_data['set-cookie']['csrftoken']
+        self.session_id = parsed_post_login_data['set-cookie']['sessionid']
 
-
+        redirect_url = parsed_post_login_data['location']
+        print(f"REDIRECT URL: {redirect_url}")
+        homePageData = self.GET("/fakebook/")
+        
         return homePageData
         
 
@@ -260,8 +291,11 @@ class Crawler:
                 print("SUCCESS")
                 parser.feed(next_url_html)
                 for link in parser.pages_to_visit:
-                    self.pages_to_visit.append(link)
-                    parser.pages_to_visit.remove(link)
+                    if link in pages_visited.keys():
+                        continue
+                    else:
+                        self.pages_to_visit.append(link)
+                        parser.pages_to_visit.remove(link)
                 pages_visited[next_url] = True
                 # print(f"PAGES VISITED: {pages_visited}\n")
                 # print(f"PAGES TO VISIT: {self.pages_to_visit}")
@@ -314,10 +348,55 @@ class Crawler:
     #     while len(self.pages_to_visit) > 0 and len(secret_flags) < 5:
     #         self.crawlFollowingURL()
     #         print(f"SECRET_FLAGS: {secret_flags}")
-    def run(self):
-        global pages_visited
-        global secret_flags
+    # def run(self):
+    #     global pages_visited
+    #     global secret_flags
 
+    #     parser = LinkParser()
+
+    #     request = f"GET / HTTP/1.0\r\nHost: {self.server}\r\n\r\n"
+
+    #     root_data = self.GET('/')
+    #     root_data_status_code, parsed_root_data = self.parseResponse(root_data)
+
+    #     home_page_data = self.login()
+    #     pages_visited['/fakebook/'] = True
+    #     home_page_status_code, parsed_home_page_data = self.parseResponse(home_page_data)
+
+    #     home_page_html = self.getHTMLContent(home_page_data)
+    #     parser.feed(home_page_html)
+
+    #     for link in parser.pages_to_visit:
+    #         self.pages_to_visit.append(link)
+    #         parser.pages_to_visit.remove(link)
+
+    #     while len(self.pages_to_visit) > 0 and len(secret_flags) < 5:
+    #         self.crawlFollowingURL()
+    #         print(f"SECRET FLAGS: {secret_flags}")
+    #         print(f"PAGES TO VISIT: {self.pages_to_visit}")
+    #         print(f"VISITED PAGES: {pages_visited}")
+
+
+        # def crawl():
+        #     while len(self.pages_to_visit) > 0 and len(secret_flags) < 5:
+        #         self.crawlFollowingURL()
+        #         print(f"SECRET FLAGS: {secret_flags}")
+
+        # # Create and start threads
+        # threads = []
+        # for _ in range(5):
+        #     thread = threading.Thread(target=crawl)
+        #     thread.start()
+        #     threads.append(thread)
+
+        # # Wait for all threads to finish
+        # for thread in threads:
+        #     thread.join()
+
+    def run(self):
+        secret_flags = []
+        pages_to_visit = deque()
+        visited_pages = set()
         parser = LinkParser()
 
         request = f"GET / HTTP/1.0\r\nHost: {self.server}\r\n\r\n"
@@ -326,31 +405,65 @@ class Crawler:
         root_data_status_code, parsed_root_data = self.parseResponse(root_data)
 
         home_page_data = self.login()
-        pages_visited['/fakebook/'] = True
+
+        visited_pages.add('/fakebook/')
+
         home_page_status_code, parsed_home_page_data = self.parseResponse(home_page_data)
 
         home_page_html = self.getHTMLContent(home_page_data)
         parser.feed(home_page_html)
 
-        for link in parser.pages_to_visit:
-            self.pages_to_visit.append(link)
-            parser.pages_to_visit.remove(link)
+        links = parser.pages_to_visit
+        for link in links: 
+            if link not in visited_pages and link not in pages_to_visit:
+                pages_to_visit.append(link)
 
-        def crawl():
-            while len(self.pages_to_visit) > 0 and len(secret_flags) < 5:
-                self.crawlFollowingURL()
-                print(f"SECRET FLAGS: {secret_flags}")
+        while len(pages_to_visit) > 0:
+            print(f"SECRET FLAGS: {secret_flags}")
+            next_url = pages_to_visit.popleft()
 
-        # Create and start threads
-        threads = []
-        for _ in range(5):
-            thread = threading.Thread(target=crawl)
-            thread.start()
-            threads.append(thread)
+            try:
+                next_url_data = self.GET(next_url)
+                next_url_status_code, parsed_next_url_data = self.parseResponse(next_url_data)
 
-        # Wait for all threads to finish
-        for thread in threads:
-            thread.join()
+                visited_pages.add(next_url)
+
+                if next_url_status_code == str(200):
+                    html = self.getHTMLContent(next_url_data)
+                    parser.feed(html)
+
+                    links = parser.pages_to_visit
+
+                    for link in links:
+                        if link not in visited_pages and link not in pages_to_visit:
+                            pages_to_visit.append(link)
+
+                    secret_flags.extend(parser.secret_flags)
+
+                    if len(secret_flags) == 5:
+                        return secret_flags
+                elif status == str(301) or status == str(302):
+                    self.pages_to_visit.append(parse_next_url['location'].replace(self.server, ""))
+                elif status == str(403) or status == str(404):
+                    pass
+                elif status == str(503):
+                    pages_to_visit.append(next_url)
+                else: 
+                    raise Exception(f"Error: Unrecognized status: {next_url_status_code}")
+            except socket.timeout:
+                raise Exception(f"Error: Socket timeout.")
+
+        return secret_flags
+
+
+
+
+                
+
+
+
+
+
 
 
 if __name__ == "__main__":
