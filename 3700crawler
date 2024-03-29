@@ -122,7 +122,7 @@ class Crawler:
         while not logged_in:
             login_data = self.GET(LOGIN_URL)
             login_data_status_code, parsedLoginData = self.parseResponse(login_data)
-            print(f'GET RESPONSE LOGIN: {login_data}')
+            # print(f'GET RESPONSE LOGIN: {login_data}')
             # print(f'parsedLoginData: {parsedLoginData}')
             if login_data_status_code == str(200):
                 logged_in = True
@@ -130,7 +130,7 @@ class Crawler:
         self.session_id = parsedLoginData['set-cookie']['sessionid']
         
         login_data_html = self.getHTMLContent(login_data)
-        print(f"HTML CONTENT: {login_data_html}")
+        # print(f"HTML CONTENT: {login_data_html}")
 
         input_parser = InputParser()
         input_parser.feed(login_data_html)
@@ -139,26 +139,26 @@ class Crawler:
         # time.sleep(1)
         
         # csrfmiddlewaretoken = input_parser.feed(parsedLoginData['body'])
-        print(f"CSRFMIDDLEWARETOKEN: {csrf_token}")
+        # print(f"CSRFMIDDLEWARETOKEN: {csrf_token}")
 
         postBody = f"username={self.username}&password={self.password}&csrfmiddlewaretoken={csrf_token}&next=/fakebook/"
         login_successful = False
         # return
         while not login_successful:
             post_login_data = self.POST(LOGIN_URL, postBody, parsedLoginData['cookie-string'])
-            print(f"POST LOGIN RESPONSE: {post_login_data}")
+            # print(f"POST LOGIN RESPONSE: {post_login_data}")
             post_login_status_code, parsed_post_login_data = self.parseResponse(post_login_data)
             # print(f"parsed_post_login_data: {parsed_post_login_data}")
 
             if post_login_status_code == str(302):
                 login_successful = True
-                print(f'Received Status Code: {post_login_status_code}')
+                # print(f'Received Status Code: {post_login_status_code}')
 
         self.csrf_token = parsed_post_login_data['set-cookie']['csrftoken']
         self.session_id = parsed_post_login_data['set-cookie']['sessionid']
 
         redirect_url = parsed_post_login_data['location']
-        print(f"REDIRECT URL: {redirect_url}")
+        # print(f"REDIRECT URL: {redirect_url}")
         homePageData = self.GET("/fakebook/")
         
         return homePageData
@@ -179,8 +179,8 @@ class Crawler:
         cookieString = self.createCookieString()
         request = f"GET {path} HTTP/1.0\nHost: {self.server}\nCookie: {cookieString}\nConnection: keep-alive{CRLF}"
 
-        print("Request to %s:%d" % (self.server, self.port))
-        print(request)
+        # print("Request to %s:%d" % (self.server, self.port))
+        # print(request)
         mysocket.send(request.encode('ascii'))
 
         data = self.receive_response(mysocket).decode('ascii')
@@ -211,8 +211,8 @@ class Crawler:
                             f"Cookie: {cookie_string}{CRLF}" \
                             f"{data}{CRLF}"
 
-        print("Request to %s:%d" % (self.server, self.port))
-        print(request)
+        # print("Request to %s:%d" % (self.server, self.port))
+        # print(request)
         mysocket.send(request.encode('ascii'))
 
         data = self.receive_response(mysocket).decode('ascii')
@@ -288,7 +288,7 @@ class Crawler:
             next_url_html = self.getHTMLContent(next_url_data)
 
             if next_url_status_code == str(200):
-                print("SUCCESS")
+                # print("SUCCESS")
                 parser.feed(next_url_html)
                 for link in parser.pages_to_visit:
                     if link in pages_visited.keys():
@@ -302,7 +302,7 @@ class Crawler:
                 secret_flags.extend(parser.secret_flags)
                 
             else:
-                print(f"ERROR: status code - {next_url_status_code}")
+                # print(f"ERROR: status code - {next_url_status_code}")
                 if next_url_status_code == str(302):
                     self.pages_to_visit.append(parse_next_url['location'].replace(self.server, ""))
                 elif next_url_status_code == str(503):
@@ -419,7 +419,7 @@ class Crawler:
                 pages_to_visit.append(link)
 
         while len(pages_to_visit) > 0:
-            print(f"SECRET FLAGS: {secret_flags}")
+            # print(f"SECRET FLAGS: {secret_flags}")
             next_url = pages_to_visit.popleft()
 
             try:
@@ -452,7 +452,7 @@ class Crawler:
                     raise Exception(f"Error: Unrecognized status: {next_url_status_code}")
             except socket.timeout:
                 raise Exception(f"Error: Socket timeout.")
-
+        print(secret_flags)
         return secret_flags
 
 
