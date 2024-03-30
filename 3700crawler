@@ -355,7 +355,7 @@ class Crawler:
 
                     if len(secret_flags) == 5:
                         for secret_flag in secret_flags:
-                            # print(secret_flag + "\n")
+                            print(secret_flag + "\n")
                         return secret_flags
                 elif next_url_status_code == str(301) or next_url_status_code == str(302):
                     self.pages_to_visit.append(parse_next_url['location'].replace(self.server, ""))
