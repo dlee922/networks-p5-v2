@@ -16,6 +16,7 @@ LOGIN_URL = "https://www.3700.network/accounts/login/?next=/fakebook/"
 pages_visited = {}
 pages_to_visit = []
 secret_flags = []
+
 # username=daniellee922&password=794c8ece704a506d26cec4f6ae17011709b9cf5e0fe969ad11db7628e6dd2ac4&csrfmiddlewaretoken=dU8D7OkeFpNptuV3XMA4ZddJ4qhLv5xX3WQJqHLtP0RocTCeXiW1vE4DWv1z5Rlo&next=
 # ./3700crawler daniellee922 794c8ece704a506d26cec4f6ae17011709b9cf5e0fe969ad11db7628e6dd2ac4
 # ./3700crawler calvinli14 74c8f4e16ff70f4c2b85318e3bebd0cd08738f3b65edb5612d6d5d23140aa441
@@ -60,6 +61,29 @@ class Crawler:
         self.csrf_token = None
         self.session_id = None
         # self.pages_to_visit = []
+        self.socket = self.create_socket()
+
+    def create_socket(self):
+        # TLS wrapper
+        context = ssl.create_default_context()
+        mysocket = context.wrap_socket(socket.socket(socket.AF_INET), server_hostname=self.server)
+        mysocket.connect((self.server, self.port))
+
+        cert = mysocket.getpeercert()
+
+        return mysocket
+        
+    # def receive_response(self, socket):
+    #     response = b""
+    #     while True:
+    #         chunk = socket.recv(4096)
+    #         if not chunk:
+    #             break
+    #         response += chunk
+    #         # if delimeter is found then nothing else to read
+    #         if response:
+    #             break
+    #     return response
 
     def receive_response(self, socket):
         response = b""
@@ -68,50 +92,29 @@ class Crawler:
             if not chunk:
                 break
             response += chunk
-            # if delimeter is found then nothing else to read
-            if response:
-                break
+
+            # Check if end of headers reached
+            if b"\r\n\r\n" in response:
+                headers_end_index = response.find(b"\r\n\r\n")
+                headers = response[:headers_end_index].decode('ascii')
+                content_length = self.get_content_length(headers)
+                if content_length is not None:
+                    # Check if all content has been received
+                    if len(response) - headers_end_index - len(CRLF) >= content_length:
+                        break
+                else:
+                    # If Content-Length header is not present, assume end of response
+                    break
+
         return response
 
-    # def receive_response(self, socket):
-    #     response = b""
-    #     headers_received = False
-    #     content_length = None
-    #     while True:
-    #         chunk = socket.recv(4096)
-    #         if not chunk:
-    #             break
-    #         response += chunk
-
-    #         # Check if we have received the headers
-    #         if not headers_received:
-    #             headers_end_index = response.find(CRLF)
-    #             if headers_end_index != -1:
-    #                 headers_received = True
-    #                 headers = response[:headers_end_index + len(CRLF)].decode('ascii')
-    #                 # Extract Content-Length if present
-    #                 content_length_str = "Content-Length: "
-    #                 content_length_index = headers.find(content_length_str)
-    #                 if content_length_index != -1:
-    #                     end_index = headers.find("\r\n", content_length_index)
-    #                     if end_index != -1:
-    #                         content_length_value = int(headers[content_length_index + len(content_length_str):end_index])
-    #                         content_length = content_length_value
-
-    #         # If headers received and content-length is provided, check if we have received the full body
-    #         if headers_received and content_length is not None:
-    #             body_start_index = response.find(CRLF * 2)
-    #             if len(response) - body_start_index >= content_length:
-    #                 break
-
-    #     return response
 
     def get_content_length(self, response):
         # Find Content-Length header
-        content_length_str = b"content-length: "
+        content_length_str = "content-length: "
         start_index = response.find(content_length_str)
         if start_index != -1:
-            end_index = response.find(b"\r\n", start_index)
+            end_index = response.find("\r\n", start_index)
             if end_index != -1:
                 content_length_value = response[start_index + len(content_length_str):end_index]
                 try:
@@ -179,49 +182,33 @@ class Crawler:
         url = urlparse(url)
         path = url.path
 
-        # TLS wrapper
-        context = ssl.create_default_context()
-        mysocket = context.wrap_socket(socket.socket(socket.AF_INET), server_hostname=self.server)
-        mysocket.connect((self.server, self.port))
-
-        cert = mysocket.getpeercert()
-        # print(cert)
         cookieString = self.createCookieString()
         request = f"GET {path} HTTP/1.0\nHost: {self.server}\nCookie: {cookieString}\nConnection: keep-alive{CRLF}"
 
         # check if server closed socket and re-initiate socket connection
         # print("Request to %s:%d" % (self.server, self.port))
         # print(request)
-        mysocket.send(request.encode('ascii'))
+        try:
+            self.socket.send(request.encode('ascii'))
+        except:
+            # print("ERROR: Socket connection closed. Reopening connection.")
+            self.socket.close()
 
-        data = self.receive_response(mysocket).decode('ascii')
-        
-        if not data:
-            mysocket.close()
-
-            mysocket = context.wrap_socket(socket.socket(socket.AF_INET), server_hostname=self.server)
-            mysocket.connect((self.server, self.port))
+            self.socket = context.wrap_socket(socket.socket(socket.AF_INET), server_hostname=self.server)
+            self.socket.connect((self.server, self.port))
             # Resend the request
-            mysocket.send(request.encode('ascii'))
+            self.socket.send(request.encode('ascii'))
             # Receive the response again
-            data = self.receive_response(mysocket).decode('ascii')
-        
-        # mysocket.shutdown(1)
-        # mysocket.close()
+            data = self.receive_response(self.socket).decode('ascii')
+            # create a new socket and resent
+
+        data = self.receive_response(self.socket).decode('ascii')
 
         return data
 
     def POST(self, url, data, cookies):
         url = urlparse(url)
         path = url.path
-        
-        # TLS wrapper
-        context = ssl.create_default_context()
-        mysocket = context.wrap_socket(socket.socket(socket.AF_INET), server_hostname=self.server)
-        mysocket.connect((self.server, self.port))
-
-        cert = mysocket.getpeercert()
-        # print(cert)
 
         content_length = len(data)
 
@@ -234,22 +221,21 @@ class Crawler:
 
         # print("Request to %s:%d" % (self.server, self.port))
         # print(request)
-        mysocket.send(request.encode('ascii'))
+        try:
+            self.socket.send(request.encode('ascii'))
+        except:
+            # print("ERROR: Socket connection closed. Reopening connection.")
+            self.socket.close()
 
-        data = self.receive_response(mysocket).decode('ascii')
-
-        if not data:
-            mysocket.close()
-
-            mysocket = context.wrap_socket(socket.socket(socket.AF_INET), server_hostname=self.server)
-            mysocket.connect((self.server, self.port))
+            self.socket = context.wrap_socket(socket.socket(socket.AF_INET), server_hostname=self.server)
+            self.socket.connect((self.server, self.port))
             # Resend the request
-            mysocket.send(request.encode('ascii'))
+            self.socket.send(request.encode('ascii'))
             # Receive the response again
-            data = self.receive_response(mysocket).decode('ascii')
-    
-        # mysocket.shutdown(1)
-        # mysocket.close()
+            data = self.receive_response(self.socket).decode('ascii')
+            # create a new socket and resent
+
+        data = self.receive_response(self.socket).decode('ascii')
 
         return data
 
@@ -338,7 +324,7 @@ class Crawler:
             try:
                 next_url_data = self.GET(next_url)
                 next_url_status_code, parsed_next_url_data = self.parseResponse(next_url_data)
-
+                
                 visited_pages.add(next_url)
 
                 if next_url_status_code == str(200):
@@ -355,7 +341,7 @@ class Crawler:
 
                     if len(secret_flags) == 5:
                         for secret_flag in secret_flags:
-                            print(secret_flag + "\n")
+                            print(secret_flag)
                         return secret_flags
                 elif next_url_status_code == str(301) or next_url_status_code == str(302):
                     self.pages_to_visit.append(parse_next_url['location'].replace(self.server, ""))
@@ -371,7 +357,7 @@ class Crawler:
         # print(f"PAGES TO VISIT: {self.pages_to_visit}")
         # print(f"VISITED PAGES: {pages_visited}")
         for secret_flag in secret_flags:
-            print(secret_flag + "\n")
+            print(secret_flag)
         return secret_flags
 
 
