@@ -1,1 +1,11 @@
-# networks-p5-v2
+# Network Project 5, Daniel Lee and Calvin Li
+
+# High Level Approach
+Our high level approach first started with just trying to get our code to log in to fakebook properly. This involved properly sending GET requests and then sending the proper POST request in order to log in. At first, we implemented this all in the run() function and then created functions for code that we found was being duplicated. This, of course, included the GET and POST method, as well as our method that we created to parse the responses to retrieve the information that we needed. Once logged in, we decided to use sets to track the pages that we had to visit and the pages the we already visited, in order to ensure that we were not traversing pages that we've already seen and used our HTMLParser to search for links on each page that we send a GET request to. These links would be appended to our set and then would be popped to traverse the next url. The same HTMLParser was also looking for secret flags as well. 
+
+# Challenges
+The first challenge we faced was getting a successful login response, which took some time to configure and get right. We eventually decided to create another HTMLParser class called InputParser which would look for input tags and then grab the csrfmiddlewaretoken. After we were able to achieve that logging in worked. The main challenge after that was optimizing our code to try to get it to run in less time. Our code intially was finding the flags in 45 minutes to an hour, but after realizing that we were opening and closing new sockets every time we called a request, we modified our code to use only one socket. This improved our run time significantly which subsequently allowed us to complete the project. 
+
+# Testing
+Testing our code was definitely much less straightforward compared to the previous projects as there were no config files to track our progress. Testing was mostly done using print statements and try, except blocks to catch different status codes, parse responses from the server and also to see if the data structures that we were using to track pages that needed to be visited and pages that we already visited were being implemented properly. Of course, we also used print statements to check if our secret flags were being found as well. 
+

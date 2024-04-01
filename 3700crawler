@@ -5,9 +5,6 @@ import socket
 import ssl
 from urllib.parse import urlparse
 from html.parser import HTMLParser
-import threading
-import time
-from collections import deque
 
 DEFAULT_SERVER = "www.3700.network"
 DEFAULT_PORT = 443
@@ -17,9 +14,7 @@ pages_visited = {}
 pages_to_visit = []
 secret_flags = []
 
-# username=daniellee922&password=794c8ece704a506d26cec4f6ae17011709b9cf5e0fe969ad11db7628e6dd2ac4&csrfmiddlewaretoken=dU8D7OkeFpNptuV3XMA4ZddJ4qhLv5xX3WQJqHLtP0RocTCeXiW1vE4DWv1z5Rlo&next=
-# ./3700crawler daniellee922 794c8ece704a506d26cec4f6ae17011709b9cf5e0fe969ad11db7628e6dd2ac4
-# ./3700crawler calvinli14 74c8f4e16ff70f4c2b85318e3bebd0cd08738f3b65edb5612d6d5d23140aa441
+# HTMLParser that looks for links with /fakebook/ and also for secret flags
 class LinkParser(HTMLParser):
     def __init__(self):
         super().__init__()
@@ -40,6 +35,7 @@ class LinkParser(HTMLParser):
             if secret_flag not in secret_flags:
                 secret_flags.append(secret_flag)
 
+# HTMLParser that looks for the csrfmiddlewaretoken used to log in
 class InputParser(HTMLParser):
     csrfmiddlewaretoken_value = ""
 
@@ -60,8 +56,7 @@ class Crawler:
         self.password = args.password
         self.csrf_token = None
         self.session_id = None
-        # self.pages_to_visit = []
-        self.socket = self.create_socket()
+        self.socket = self.create_socket() # create one socket that will remain open
 
     def create_socket(self):
         # TLS wrapper
@@ -72,19 +67,8 @@ class Crawler:
         cert = mysocket.getpeercert()
 
         return mysocket
-        
-    # def receive_response(self, socket):
-    #     response = b""
-    #     while True:
-    #         chunk = socket.recv(4096)
-    #         if not chunk:
-    #             break
-    #         response += chunk
-    #         # if delimeter is found then nothing else to read
-    #         if response:
-    #             break
-    #     return response
 
+    # receives response based on the content_length header
     def receive_response(self, socket):
         response = b""
         while True:
@@ -93,24 +77,23 @@ class Crawler:
                 break
             response += chunk
 
-            # Check if end of headers reached
+            # check if end of headers reached
             if b"\r\n\r\n" in response:
                 headers_end_index = response.find(b"\r\n\r\n")
                 headers = response[:headers_end_index].decode('ascii')
                 content_length = self.get_content_length(headers)
                 if content_length is not None:
-                    # Check if all content has been received
+                    # check if all content has been received
                     if len(response) - headers_end_index - len(CRLF) >= content_length:
                         break
                 else:
-                    # If Content-Length header is not present, assume end of response
+                    # if content-length header is not present, assume end of response
                     break
 
         return response
 
-
+    # find content-length header
     def get_content_length(self, response):
-        # Find Content-Length header
         content_length_str = "content-length: "
         start_index = response.find(content_length_str)
         if start_index != -1:
@@ -123,53 +106,60 @@ class Crawler:
                     return None
         return None
 
+    # retrieve just the HTML content after the headers
     def getHTMLContent(self, data):
         html_start_index = data.find(CRLF) + len(CRLF)
         html_content = data[html_start_index:]
         return html_content
 
+    # login to Fakebook
     def login(self):
         global pages_to_visit
 
         logged_in = False
         while not logged_in:
+            # send get request to the fakebook login page
             login_data = self.GET(LOGIN_URL)
             login_data_status_code, parsedLoginData = self.parseResponse(login_data)
+
             # print(f'GET RESPONSE LOGIN: {login_data}')
             # print(f'parsedLoginData: {parsedLoginData}')
+
             if login_data_status_code == str(200):
                 logged_in = True
+
+        # update csrf_token and session_id
         self.csrf_token = parsedLoginData['set-cookie']['csrftoken']
         self.session_id = parsedLoginData['set-cookie']['sessionid']
         
+        # use input parser to parse the html content of the login page and retreive csrfmiddlewaretoken
         login_data_html = self.getHTMLContent(login_data)
         # print(f"HTML CONTENT: {login_data_html}")
-
         input_parser = InputParser()
         input_parser.feed(login_data_html)
         csrf_token = input_parser.csrfmiddlewaretoken_value
 
-        # time.sleep(1)
-        
-        # csrfmiddlewaretoken = input_parser.feed(parsedLoginData['body'])
-        # print(f"CSRFMIDDLEWARETOKEN: {csrf_token}")
-
+        # create the body of the post request
         postBody = f"username={self.username}&password={self.password}&csrfmiddlewaretoken={csrf_token}&next=/fakebook/"
         login_successful = False
-        # return
         while not login_successful:
+            # send post request
             post_login_data = self.POST(LOGIN_URL, postBody, parsedLoginData['cookie-string'])
             # print(f"POST LOGIN RESPONSE: {post_login_data}")
             post_login_status_code, parsed_post_login_data = self.parseResponse(post_login_data)
             # print(f"parsed_post_login_data: {parsed_post_login_data}")
 
+            # received redirect status code
             if post_login_status_code == str(302):
                 login_successful = True
                 # print(f'Received Status Code: {post_login_status_code}')
 
+
+        # update csrf_token and session_id post-login
         self.csrf_token = parsed_post_login_data['set-cookie']['csrftoken']
         self.session_id = parsed_post_login_data['set-cookie']['sessionid']
 
+        # create redirect url and send another GET request
         redirect_url = parsed_post_login_data['location']
         # print(f"REDIRECT URL: {redirect_url}")
         homePageData = self.GET("/fakebook/")
@@ -183,11 +173,12 @@ class Crawler:
         path = url.path
 
         cookieString = self.createCookieString()
-        request = f"GET {path} HTTP/1.0\nHost: {self.server}\nCookie: {cookieString}\nConnection: keep-alive{CRLF}"
+        request = f"GET {path} HTTP/1.1\nHost: {self.server}\nCookie: {cookieString}\nConnection: keep-alive{CRLF}"
 
-        # check if server closed socket and re-initiate socket connection
         # print("Request to %s:%d" % (self.server, self.port))
         # print(request)
+
+        # check if server closed socket and re-initiate socket connection
         try:
             self.socket.send(request.encode('ascii'))
         except:
@@ -196,11 +187,10 @@ class Crawler:
 
             self.socket = context.wrap_socket(socket.socket(socket.AF_INET), server_hostname=self.server)
             self.socket.connect((self.server, self.port))
-            # Resend the request
+            # resend request
             self.socket.send(request.encode('ascii'))
-            # Receive the response again
+            # receive response again
             data = self.receive_response(self.socket).decode('ascii')
-            # create a new socket and resent
 
         data = self.receive_response(self.socket).decode('ascii')
 
@@ -213,7 +203,7 @@ class Crawler:
         content_length = len(data)
 
         cookie_string = f"csrftoken={self.csrf_token}; sessionid={self.session_id}"
-        request = f"POST {path} HTTP/1.0\r\nHost: {self.server}\r\nConnection: keep-alive\r\n" \
+        request = f"POST {path} HTTP/1.1\r\nHost: {self.server}\r\nConnection: keep-alive\r\n" \
                             f"Content-Length: {content_length}\r\n" \
                             f"Content-Type: application/x-www-form-urlencoded\r\n" \
                             f"Cookie: {cookie_string}{CRLF}" \
@@ -238,7 +228,8 @@ class Crawler:
         data = self.receive_response(self.socket).decode('ascii')
 
         return data
-
+    
+    # configures the cookie string to send in requests
     def createCookieString(self):
         cookieString = ""
         if self.csrf_token:
@@ -250,6 +241,7 @@ class Crawler:
             cookieString = f"sessionid={self.session_id}"
         return cookieString
 
+    # reformats the cookies from the parsedData
     def formatCookies(self, parsedData):
         if 'set-cookie' not in parsedData.keys():
             return parsedData
@@ -269,13 +261,23 @@ class Crawler:
     def parseResponse(self, data):
         # Get the end index of the header section before the body begins
         headers_end_index = data.find(CRLF)
+
+        # retrive the status_line to get the status code
         status_line = data[:headers_end_index].split('\r\n')[0]
-        headers = data[:headers_end_index].split('\r\n')[1:]
-        body = data[headers_end_index:]
         status_code = status_line.split(' ')[1]
+
+        # retrieve headers
+        headers = data[:headers_end_index].split('\r\n')[1:]
+
+        # retrieve the body
+        body = data[headers_end_index:]
+
+        # create dictionary for the parsed data
         parsedData = {}
         parsedData['body'] = body
+
         for header in headers:
+            # splitting the csrftoken and sessionid
             if header.startswith('set-cookie:'):
                 parts = header.split(': ')
                 cookie_key, cookie_value = parts[0], parts[1]
@@ -285,10 +287,12 @@ class Crawler:
                 value = cookie_parts[0].split('=')[1]
 
                 parsedData.setdefault('set-cookie', {})[key] = value
+            # else the rest are just normal headers
             else:
                 key, value = header.split(': ', 1)
                 parsedData[key.lower()] = value
         # print(f'PARSED DATA: {parsedData}')
+
         return status_code, self.formatCookies(parsedData)
 
     def run(self):
@@ -297,11 +301,13 @@ class Crawler:
         visited_pages = set()
         parser = LinkParser()
 
+        # send initial request to root url
         request = f"GET / HTTP/1.0\r\nHost: {self.server}\r\n\r\n"
 
         root_data = self.GET('/')
         root_data_status_code, parsed_root_data = self.parseResponse(root_data)
 
+        # login and get the home page data
         home_page_data = self.login()
 
         visited_pages.add('/fakebook/')
@@ -309,24 +315,31 @@ class Crawler:
         home_page_status_code, parsed_home_page_data = self.parseResponse(home_page_data)
 
         home_page_html = self.getHTMLContent(home_page_data)
-        parser.feed(home_page_html)
 
+        # feed the home page html to our parser and retrieve the links on that page to begin traversing
+        parser.feed(home_page_html)
         links = parser.pages_to_visit
+        
+        # add link to our local pages_to_visit
         for link in links: 
             if link not in visited_pages and link not in pages_to_visit:
                 pages_to_visit.add(link)
 
+        # continue looping while there are pages to traverse
         while len(pages_to_visit) > 0:
             # print(f"SECRET FLAGS: {secret_flags}")
             # print(f"Remaining pages: {len(pages_to_visit)}")
+
             next_url = pages_to_visit.pop()
 
             try:
                 next_url_data = self.GET(next_url)
                 next_url_status_code, parsed_next_url_data = self.parseResponse(next_url_data)
                 
+                # add the next_url to our set of visited_pages
                 visited_pages.add(next_url)
 
+                # success
                 if next_url_status_code == str(200):
                     html = self.getHTMLContent(next_url_data)
                     parser.feed(html)
@@ -339,23 +352,25 @@ class Crawler:
 
                     # secret_flags.extend(parser.secret_flags)
 
+                    # if 5 secret_flags are found then print flags, return and exit program
                     if len(secret_flags) == 5:
                         for secret_flag in secret_flags:
                             print(secret_flag)
                         return secret_flags
+                # redirect
                 elif next_url_status_code == str(301) or next_url_status_code == str(302):
                     self.pages_to_visit.append(parse_next_url['location'].replace(self.server, ""))
+                # abandon
                 elif next_url_status_code == str(403) or next_url_status_code == str(404) or next_url_status_code == str(400):
                     pass
+                # revisit again
                 elif next_url_status_code == str(503):
                     pages_to_visit.add(next_url)
                 else: 
-                    raise Exception(f"Error: Unrecognized status: {next_url_status_code}")
+                    raise Exception(f"Error: Unrecognized status - {next_url_status_code}")
             except socket.timeout:
                 raise Exception(f"Error: Socket timeout.")
-        # print(secret_flags)
-        # print(f"PAGES TO VISIT: {self.pages_to_visit}")
-        # print(f"VISITED PAGES: {pages_visited}")
+
         for secret_flag in secret_flags:
             print(secret_flag)
         return secret_flags
